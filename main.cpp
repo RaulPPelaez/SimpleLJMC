@@ -1,6 +1,6 @@
 // Raul P. Pelaez 2016. 
-// Monte Carlo Simulation of a Lennard Jonnes liquid with PBC and Neighbour head and list
-// Compile with: g++ -O2 main.cpp -o mc
+// Molecular Dynamics Simulation of a Lennard Jonnes liquid with PBC and Neighbour head and list
+// Compile with: make
 // Usage: ./mc
 //
 // The program outputs a file with the positions of all the particles with frequency save_freq. This file is spunto (superpunto) compatible! just spunto data.pos!
@@ -22,27 +22,49 @@
 //
 //You can send me questions and feedback at raul.perez@uam.es
 //
+//CHANGES FROM THE PREVIOUS MC CODE!
+//From the previous MC assignement code you need very few changes to make a MD code!.
+//
+//Basically you need two new variables to store the forces acting 
+// on a particle and their velocities.
+//Then, you need to adapt the functions energyNL (now forcesNL) and LJNL 
+// to return three values, the three components of the force acting
+// on particle index (rather than the energy as before).
+//Finally, change do_step to do the following:
+//     1- Compute the forces acting on every particle
+//     2- Use that forces to integrate the next time step using velocity verlet,
+//        updating the positions and fixing head and list.
+//
+//That is it!!
+//
+//
+//I changed the function names and arguments and made the new variables
+// , so you only have to:
+//     1- Write your code in the functions compute_forces() and 
+//        update_positions(). 
+//     2- Modify the LJNL code to sum the force in each coordinate (fx, fy ,fz) 
+//        instead of computing and returning the potential.
+//
+//And again, you can contact me at raul.perez@uam.es or at the
+// github page https://github.com/RaulPPelaez/SimpleLJMC if you find something odd!
+//
 #include<iostream>  //cout, printf
-#include<vector>    //vector
-#include<fstream>   //ofstream
-#include<cmath>     //sqrt
-#include<algorithm> //sort
+#include<vector>    //vector class
+#include<fstream>   //ofstream, ifstream for file IO
+#include<cmath>     //sqrt for rdf
+#include<algorithm> //sort algorithm for heal_list
 using namespace std;
 
-//returns a number between 0 and 1
-#define RANDESP (rand()/(float)RAND_MAX)
-//Desired proportion between accepted and rejected attempts
-#define TRUST 0.5
 
-
-//** Monte Carlo functions **//
-void  init();      //Initialices all variables and sets up initial conditions
-void  do_step();   //Attempts to move one particle
-float energyNL(int index);//Computes the energy of particle index
-float LJNL(float *r1, float *r2); //Lennard Jonnes potential between two positions, taking into account PBC
-float W(float dH);  //Returns the Metropolis probability as a function of dH
-void  make_linked_list();  //Fills head and list with the current system state
-void  heal_list(int cella, int cellb); //Recalculates cella and cellb in head and list   
+//** Molecular Dynamics functions **//
+void init();      //Initialices all variables and sets up initial conditions
+void do_step();   //Computes the forces on every particle and moves them
+void compute_forces(); //do_step calls these two functions
+void update_positions(); 
+void forceNL(int index);//Computes the force acting on particle index
+void LJNL(float *r1, float *r2, float &fx, float &fy, float &fz); //Lennard Jonnes force between two positions, taking into account PBC, the result is stored summed tu fx, fy, fz
+void make_linked_list();  //Fills head and list with the current system state
+void heal_list(int cella, int cellb); //Recalculates cella and cellb in head and list   
 
 
 //** Helper functions **//
@@ -59,6 +81,7 @@ void  print_wellcome();     //Prints awellcome message
 //**Monte Carlo variables**//
 //We are not changing the number of particles (nor cells) in this code, so we dont even need vector<>, but it is useful! 
 vector<float> pos;  //Particle positions, stored aligned as x1,y1,z1,x2,y2,z2...
+vector<float> F, vel;  //Particle forces and velocities, stored aligned as x1,y1,z1,x2,y2,z2...
 vector<int>   list, head; //Neighbour list head and list
 int           ncells;     //Number of cells in one direction in the head and list grid (ncellstotal = ncells ^3)  
 float jump_size;          //Step length when attemting to move a particle
@@ -66,16 +89,15 @@ float jump_size;          //Step length when attemting to move a particle
 
 //**Parameters**//
 //You can write your code in init() to read all the parameters from a file i.e!
-int   N= 1000;      //Number of particles
-float L = 15;       //Simulation box size (units of sigma)
-float rcut = 2.25;  //Interaction cut off (units of sigma)
-float T = 0.2;      //Temperature         (units of k_B)
+int   N = 100;         //Number of particles
+float L = 10;          //Simulation box size (units of sigma)
+float rcut = 2.25;     //Interaction cut off (units of sigma)
+const float dt = 0.02; //Integration time step
 
-const int nsteps         = 10;  //Number of simulation steps to perform (one steps is N tries)
-const int save_freq      = 10;   //Write results every save_freq steps
+
+const int nsteps         = 10000;  //Number of simulation steps to perform (one steps is N tries)
+const int save_freq      = 100;   //Write results every save_freq steps
 const int thermal_nsteps = 1;    //Number of thermalization steps
-const int adjust_steps   = 200;  //jump_size adjusting steps interval (200 recommended)
-
 
 //**Radial function distribution parameters**//
 
@@ -90,7 +112,7 @@ int main(){
   init();
 
   /*Thermalize the system by doing some steps*/
-  for(int t=0; t<N*thermal_nsteps; t++)
+  for(int t=0; t<thermal_nsteps; t++)
     do_step();
   
   int print_steps= nsteps/100+1; //For printing progress
@@ -104,8 +126,7 @@ int main(){
     /*Average radial function distribution*/
     rdf(); 
     /*Perform N MC updates*/
-    for(int j=0; j<N;j++)
-      do_step();
+    do_step();
     /*Write results to disk"*/
     if(t%save_freq==0) 
       write_results();
@@ -118,26 +139,24 @@ int main(){
 
 //********Initialize********//
 void init(){
-  /*Random number generator seed*/
-  //I am using rand from std, you can try and use some other generator! like xorshift
-  srand(time(NULL)); //If you want to debug some error, use a constant instead time!
- 
-  //jump_size should always be smaller than the size of a cell
-  //Try monitoring this variable and see what jump size the system chooses and how fast it arrives to that value!
-  jump_size = 0.5/L; //Initial step size of 0.5 in units of L (just because);
-  
   gdr.resize(RDF_SAMPLES,0); /*Reserve space and initialize to zero the radial function distribution*/
   pos.resize(3*N); /*Reserve space for positions*/
+  F.resize(3*N,0); /*Reserve space for forces*/
+  vel.resize(3*N,0); /*Reserve space for vel*/
   
-  /*Initial random position*/
+  /*Initial position*/
   //We take the box size, L, as the unit of length, simplifying some things.
   //When computing the LJ interaction, we multiply by L.
+  ifstream in("kk");
+  float x, y, z, trash;
   for(int i=0; i<N; i++){ //Positions go from -0.5 to 0.5
-    pos[3*i]   = (RANDESP-0.5);
-    pos[3*i+1] = (RANDESP-0.5);
-    pos[3*i+2] = (RANDESP-0.5);
+    in>>x>>y >> z>>trash>>trash;
+    pos[3*i] = x/L;
+    pos[3*i+1] = y/L;
+    pos[3*i+2] = z/L;
+    
   }
-  
+  in.close();
 
   /*Set up head and list variables*/
   //ncells is calculated so there can not be
@@ -239,68 +258,48 @@ void heal_list(int cella, int cellb){
 
 //*********Perform one MC step***********//
 void do_step(){
-  //We nedd to remember the proportion between accepted and rejected steps to twek the jump_size!
-  static int accepted = 0, rejected = 0, steps = 0;
-  int cella, cellb; //Particle's icell before and after move 
-  float temppos[3];
-  steps++;
-  /*Pick a random particle*/
-  int index= rand()%N;
-  /*Create a vector with a random direction and length proportional to jump_size*/
-  float jump[3];
-  //It doesnt have to be in a sphere of radius jump_size (detailed balance!)
-  for(int i=0; i<3; i++) jump[i] = (RANDESP-0.5)*jump_size;
-
-  /*Compute the current energy*/
-  for(int i=0; i<3; i++) temppos[i] = pos[3*index+i];
-  apply_pbc(temppos);
-  cella = getcell(temppos);
-  float H0 = energyNL(index);
-
-  /*Compute the energy with the particle displaced*/
-  for(int i = 0; i<3; i++){
-    pos[3*index+i] += jump[i];
-    temppos[i] = pos[3*index+i];
-  }
-  apply_pbc(temppos);
-  cellb = getcell(temppos);
-  float Hf = energyNL(index);
-
-  //The difference between the particle initially and displaced by jump
-  float dH = -(H0-Hf);
-  /*Metropolis algorithm!*/
-  if(RANDESP < W(dH)){ /*If the particle cell changed, heal head and list!*/
-    accepted++;
-    if(cella!=cellb) heal_list(cella, cellb);
-  }
-  else{/*If rejected move particle back to its original position*/
-    rejected++;
-    for(int i = 0; i<3; i++) pos[3*index+i] -= jump[i];
-  }
-
-  /*Now we adjust the jump_size if necesary*/
-  if(steps%adjust_steps==0){ //Every adjust_steps steps
-    //With this, the system chooses itself the optimal jump_size
-    float ratio = accepted/(float)rejected;
-    if(ratio<TRUST && jump_size>1e-5*L) jump_size *= 0.99f;
-    if(ratio>TRUST && jump_size<L/(float)ncells) jump_size *= 1.01f;
-  }
-
+  /*Set forces to zero*/
+  std::fill(F.begin(), F.end(), 0);
+  /*This function should compute the forces 
+    acting on every particle and store that information in F */
+  compute_forces();
+  /*This function should use the forces (F variable) now filled to 
+    integrate the positions, updating the pos and vel variables*/
+  update_positions();
+  
 }
 
-//****Metropolis probability (Look in the notes!)*/
-float W(float dH){
-  if(dH<=0) return 1.0;
-  else return exp(-dH/T);
-}
+void compute_forces(){
+  //You can use the already declared functions from the MC assignement here
+  //With very little change you can adapt energyNL to update the F variable
+  // (three components of F per particle!)
+  //the same with LJNL, wich should now return three components, (fx, fy and fz).
 
+  //If you do that, the code is just as simple as this.
+  for(int i=0; i<N; i++)
+    forceNL(i);
+  
+}
+void update_positions(){
+  //Put your velocity verlet code here, you need the forces, 
+  //velocities and positions of the particles, plus the time step
+  //You can access all that data in the F, vel, pos and dt variables.
+  //You also have available all the parameters, like the number of particles, N
+  for(int i = 0; i<N; i++)
+    for(int j=0; j<3; j++){
+      vel[3*i+j] += F[3*i+j]*dt;
+      pos[3*i+j] += vel[3*i+j]*dt;
+    }
+  //Be carefull, the particles might have changed cells!
+  make_linked_list();
+
+}
 
 
 //******Compute the energy of the system for particle index using head and list ****//
 //It is easier than it seems, we have to go through particle particle index sees, but only in the
 // same cell that the particle is in, plus the first neighbour ones.
-float energyNL(int index){
-  float H = 0.0; //Energy
+void forceNL(int index){
   /*Save the index particle position*/
   float posindex[3];//Temporal position storage
   for(int i=0; i<3; i++) posindex[i] =  pos[3*index+i];
@@ -331,12 +330,11 @@ float energyNL(int index){
 	  /*Add the energy of the pair interaction*/
 	  //Be careful not to compute one particle with itself!, j-1 because of head and list indexes!
 	  if(index!=(j-1))
-	    H += LJNL(&pos[3*index], &pos[3*(j-1)]);
+	    LJNL(&pos[3*index], &pos[3*(j-1)], F[3*index], F[3*index+1], F[3*index+2]);
 	  j=list[j];
 	  /*When j=0 (list[j] = 0) then there is no more particles in cell jcel (see the notes!)*/
 	}while(j!=0);
       } 
-  return H;
 }
 
 
@@ -354,7 +352,7 @@ int pbc_cells(int icell){
 //**Lennard Jonnes interaction between two points**//
 //This is  where the program spends most time in (~70% of the time!), it is called many many times.
 //The most expensive thing is rij = r2-r1 and applying PBC.
-float LJNL(float *r1, float *r2){
+void LJNL(float *r1, float *r2, float &fx, float &fy, float &fz){
   /*Take a vector joining twe two points*/
   float rij[3];
   for(int i=0; i<3; i++) rij[i] = r2[i]-r1[i];
@@ -362,10 +360,16 @@ float LJNL(float *r1, float *r2){
   apply_pbc(rij);
   /*And compute the LJ potential using its norm!*/
   float r2mod = norm(rij)*L*L; //Now the distance is between 0 and L/2 ! 
-  if(r2mod>rcut*rcut) return 0.0;
+  if(r2mod>rcut*rcut) return;
   double invr6 = pow(1.0f/r2mod, 3);
   /*Here sigma = 1 and epsilon = 1*/
-  return 4.0*invr6*(invr6-1.0);
+  //Check this out, you dont even need to compute sqrt(r2)!
+  float fmoddivr = -48.0*invr6*(invr6-0.5)/r2mod; //F/r
+
+  //F*rij/r being F and rij vectors!
+  fx += fmoddivr*rij[0]; 
+  fy += fmoddivr*rij[1];
+  fz += fmoddivr*rij[2];
 }
 
 
@@ -482,11 +486,11 @@ void write_results(){
 
 /*Prints some information about the simulation being performed*/
 void print_wellcome(){
-  printf("Lennard-Jonnes liquid Monte Carlo simulation!\n\n");
+  printf("Lennard-Jonnes liquid Molecular Dynamics simulation!\n\n");
 
   printf("Simulation parameters:\n");
-  printf("\tTemperature: %.2f\n\tNumber of particles: %d\n\tSimulation box size: %.2f sigma\n\n",
-	 T,                      N,                         L);
+  printf("\tNumber of particles: %d\n\tSimulation box size: %.2f sigma\n\n",
+	                   N,                         L);
   printf("\tTotal number of cells: %d\n", ncells*ncells*ncells);
   printf("\n");
 }
