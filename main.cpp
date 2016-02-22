@@ -60,7 +60,7 @@ using namespace std;
 void init();      //Initialices all variables and sets up initial conditions
 void do_step();   //Computes the forces on every particle and moves them
 void compute_forces(); //do_step calls these two functions
-void update_positions(); 
+void update_positions(int sw); //Velocity verlet integrator, sw==1 is the first step and sw==2 the second 
 void forceNL(int index);//Computes the force acting on particle index
 void LJNL(float *r1, float *r2, float &fx, float &fy, float &fz); //Lennard Jonnes force between two positions, taking into account PBC, the result is stored summed tu fx, fy, fz
 void make_linked_list();  //Fills head and list with the current system state
@@ -257,15 +257,17 @@ void heal_list(int cella, int cellb){
 
 
 //*********Perform one MC step***********//
+// **** CHANGE HERE TO ADAPT TO VELOCITY VERLET INTEGRATOR //
 void do_step(){
   /*Set forces to zero*/
   std::fill(F.begin(), F.end(), 0);
+  update_positions(1); //first velocity verlet step (fill)
   /*This function should compute the forces 
     acting on every particle and store that information in F */
   compute_forces();
   /*This function should use the forces (F variable) now filled to 
     integrate the positions, updating the pos and vel variables*/
-  update_positions();
+  update_positions(2);  //second velocity verlet step (fill)
   
 }
 
@@ -278,9 +280,16 @@ void compute_forces(){
   //If you do that, the code is just as simple as this.
   for(int i=0; i<N; i++)
     forceNL(i);
-  
+  // YOU CAN TRY TO IMPROVE THE FORCE EVALUATION BY looping over all linked-cells in forceNL
 }
-void update_positions(){
+void update_positions(int sw){
+  //  CHANGE HERE TO VERLET***
+  if(sw==1){
+    //First verlet step
+  }
+ else{
+   //secod verlet step
+ // THIS IS AN EULER INTEGRATOR (just to see it works, after delete it)
   //Put your velocity verlet code here, you need the forces, 
   //velocities and positions of the particles, plus the time step
   //You can access all that data in the F, vel, pos and dt variables.
@@ -292,8 +301,9 @@ void update_positions(){
     }
   //Be carefull, the particles might have changed cells!
   make_linked_list();
+  }
+  }
 
-}
 
 
 //******Compute the energy of the system for particle index using head and list ****//
