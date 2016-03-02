@@ -66,12 +66,12 @@ float jump_size;          //Step length when attemting to move a particle
 
 //**Parameters**//
 //You can write your code in init() to read all the parameters from a file i.e!
-int   N= 1000;      //Number of particles
+int   N= 500;      //Number of particles
 float L = 15;       //Simulation box size (units of sigma)
 float rcut = 2.25;  //Interaction cut off (units of sigma)
-float T = 0.2;      //Temperature         (units of k_B)
+float T = 1;      //Temperature         (units of k_B)
 
-const int nsteps         = 10;  //Number of simulation steps to perform (one steps is N tries)
+const int nsteps         = 1000;  //Number of simulation steps to perform (one steps is N tries)
 const int save_freq      = 10;   //Write results every save_freq steps
 const int thermal_nsteps = 1;    //Number of thermalization steps
 const int adjust_steps   = 200;  //jump_size adjusting steps interval (200 recommended)
@@ -219,8 +219,8 @@ void heal_list(int cella, int cellb){
     i = list[i];
     to_redo++;
   }
-  /*This vector needs to be sorted to do the trick!*/
-  std::sort(redo.begin(), redo.begin()+to_redo);
+  /*This vector needs to be sorted to do the trick! FALSE IT DOES NOT!!*/
+  // std::sort(redo.begin(), redo.begin()+to_redo);
   /*Reset both cells*/
   head[cella] = head[cellb] = 0;
   /*Now we use the same old algorithm that we use to create the head and list*/
