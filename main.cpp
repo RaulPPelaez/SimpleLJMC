@@ -238,8 +238,8 @@ void heal_list(int cella, int cellb){
     i = list[i];
     to_redo++;
   }
-  /*This vector needs to be sorted to do the trick!*/
-  std::sort(redo.begin(), redo.begin()+to_redo);
+  /*This vector needs to be sorted to do the trick!, FALSE IT DOES NOT!*/
+  //  std::sort(redo.begin(), redo.begin()+to_redo);
   /*Reset both cells*/
   head[cella] = head[cellb] = 0;
   /*Now we use the same old algorithm that we use to create the head and list*/
